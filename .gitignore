@@ -1,0 +1,10 @@
+.env
+chroma_database/
+data/
+RAG_data/
+sample_RAG_data/
+.gradio/
+__pycache__/
+.ipynb_checkpoints/
+environment.yml
+venv/

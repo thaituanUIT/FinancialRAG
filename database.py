@@ -12,6 +12,7 @@ import os
 import shutil
 import nltk
 import json
+import numpy as np
 
 from torch import embedding
 
@@ -102,7 +103,7 @@ def semantic_chunking(text, threshold=0.75, model="sentence-transformers/all-Min
     res_chunks = []
     
     for i in range(1, len(sents)):
-        cos_sim = cosine_similarity([embeddings[i-1]], [embeddings[i]])[0][0]
+        cos_sim = cosine_similarity(np.matrix(embeddings[i-1]), np.matrix(embeddings[i]))[0][0]
         
         if cos_sim > threshold:
             curr_chunk.append(sents[i])

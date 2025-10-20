@@ -2,22 +2,18 @@ import chromadb
 from langchain_chroma import Chroma
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.document_loaders import DirectoryLoader
-from langchain_text_splitters import RecursiveCharacterTextSplitter
+from langchain_text_splitters import RecursiveCharacterTextSplitter, RecursiveJsonSplitter, SpacyTextSplitter
 from langchain_core.documents import Document
 
 from sentence_transformers import SentenceTransformer
 from sklearn.metrics.pairwise import cosine_similarity
+from sklearn.preprocessing import normalize
 
 import os
 import shutil
 import nltk
 import json
 import numpy as np
-
-try:
-    nltk.data.find("tokenizers/punkt")
-except LookupError:
-    nltk.download("punkt")
 
 DATASET_PATH = r"/home/thaituan_uit/RAG_UIT_project/news.json"
 CHROMA_PATH = "chroma_database"
@@ -28,6 +24,8 @@ model_kwargs = {
         'trust_remote_code':True
 }
 
+emb_model = SentenceTransformer("sentence-transformers/all-MiniLM-L6-v2", device=model_kwargs.get("device", None))
+
 text_splitter = RecursiveCharacterTextSplitter(
     chunk_size = 500,
     chunk_overlap = 100,
@@ -37,7 +35,7 @@ text_splitter = RecursiveCharacterTextSplitter(
 
 def main():
     docs = load_docs()
-    chunks = semantic_chunking(docs)
+    chunks = semantic_chunking(docs, emb_model)
     save_database(chunks)
 
 def split_into_batches(data, batch_size):
@@ -95,10 +93,19 @@ def load_docs():
     except Exception as e:
         print(f"An error occurred while loading documents: {e}")
         return []
+    
+def splitting_text(documents):
+    chunks = text_splitter.split_documents(documents)
+    print(f"Split  {len(documents)} documents into {len(chunks)} chunks")
+    return chunks
 
-def semantic_chunking(docs, threshold=0.75, model_name="sentence-transformers/all-MiniLM-L6-v2"):
-
-    model = SentenceTransformer(model_name, device=model_kwargs.get("device", None))
+def semantic_chunking(docs, model, threshold=0.8):
+    """
+    Optimized Semantic chunking.
+    - docs: list[Document] or list[str]
+    - model: SentenceTransformer
+    - threshold: Cosine Similarity threshold
+    """
 
     res_chunks = []
 
@@ -113,43 +120,36 @@ def semantic_chunking(docs, threshold=0.75, model_name="sentence-transformers/al
         text = text.strip()
         if not text:
             continue
-
+        
         sents = nltk.sent_tokenize(text)
         if not sents:
             continue
 
-        embeddings = model.encode(sents, convert_to_numpy=True)
+        embeddings = model.encode(sents, batch_size=64, convert_to_numpy=True, show_progress_bar=True)
+        embeddings = normalize(embeddings)  
+
+        sims = np.sum(embeddings[:-1] * embeddings[1:], axis=1)
 
         chunks = []
         curr_chunk = [sents[0]]
 
-        for i in range(1, len(sents)):
-            a = embeddings[i - 1].reshape(1, -1)
-            b = embeddings[i].reshape(1, -1)
-            cos_sim = float(cosine_similarity(a, b)[0, 0])
-
-            if cos_sim > threshold:
-                curr_chunk.append(sents[i])
+        for i, sim in enumerate(sims):
+            if sim > threshold:
+                curr_chunk.append(sents[i + 1])
             else:
                 chunks.append(" ".join(curr_chunk))
-                curr_chunk = [sents[i]]
-
+                curr_chunk = [sents[i + 1]]
         chunks.append(" ".join(curr_chunk))
 
         for chunk in chunks:
-            if len(chunk) > 1000:
+            if text_splitter and len(chunk) > 1000:
                 parts = text_splitter.split_text(chunk)
                 for p in parts:
                     res_chunks.append(Document(page_content=p, metadata=metadata))
             else:
                 res_chunks.append(Document(page_content=chunk, metadata=metadata))
-
+                
     return res_chunks
-
-def splitting_text(documents):
-    chunks = text_splitter.split_documents(documents)
-    print(f"Split  {len(documents)} documents into {len(chunks)} chunks")
-    return chunks
 
 def save_database(chunks):
     if(os.path.exists(CHROMA_PATH)):
@@ -163,12 +163,6 @@ def save_database(chunks):
 
     for batch in split_into_batches(chunks, max_batch_size):
         db.add_documents(batch)
-        
-    db = Chroma.from_documents(
-        chunks,
-        embedding,
-        persist_directory=CHROMA_PATH
-    )
 
     print(f"Saved {len(chunks)} to db {CHROMA_PATH}")
 

@@ -19,8 +19,7 @@ def new_system_prompt(base_prompt: str):
 """
     return sys_prompt
 
-def create_financial_prompt(query_text, context):
-    return f"""
+financial_prompt = lambda query_text, context: f"""
 BẠN LÀ: Chuyên gia tài chính người Việt với 10 năm kinh nghiệm
 
 NHIỆM VỤ: 
@@ -46,6 +45,20 @@ KHÔNG BAO GIỜ:
 CÂU HỎI: {query_text}
 
 PHÂN TÍCH CHI TIẾT:
+"""
+
+prompt_template = lambda query_text, context: f"""
+
+Bạn là một trợ lí tài chính Tiếng Việt nhiệt tình và trung thực. 
+Hãy luôn trả lời một cách hữu ích nhất có thể, 
+đồng thời giữ an toàn dựa trên thông tin bên dưới:\n
+
+{context}
+
+Query: {query_text}
+
+Answer:
+
 """
 
 def context_aware_prompt(query_text, context, conv_history=None):

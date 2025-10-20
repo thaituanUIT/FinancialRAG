@@ -14,7 +14,10 @@ import nltk
 import json
 import numpy as np
 
-from torch import embedding
+try:
+    nltk.data.find("tokenizers/punkt")
+except LookupError:
+    nltk.download("punkt")
 
 DATASET_PATH = r"/home/thaituan_uit/RAG_UIT_project/news.json"
 CHROMA_PATH = "chroma_database"
@@ -34,13 +37,12 @@ text_splitter = RecursiveCharacterTextSplitter(
 
 def main():
     docs = load_docs()
-    chunks = splitting_text(docs)
+    chunks = semantic_chunking(docs)
     save_database(chunks)
 
 def split_into_batches(data, batch_size):
     for i in range(0, len(data), batch_size):
         yield data[i:i + batch_size]
-
 
 def load_docs():
     try:
@@ -89,36 +91,59 @@ def load_docs():
             documents.append(Document(page_content=content, metadata=metadata))
 
         return documents
+    
     except Exception as e:
         print(f"An error occurred while loading documents: {e}")
         return []
-    
-def semantic_chunking(text, threshold=0.75, model="sentence-transformers/all-MiniLM-L6-v2"):
-    model = SentenceTransformer(model_name, device=model_kwargs['device'])
-    sents = nltk.sent_tokenize(text)
-    embeddings = model.encode(sents)
-    
-    chunks = []
-    curr_chunk = [sents[0]]
+
+def semantic_chunking(docs, threshold=0.75, model_name="sentence-transformers/all-MiniLM-L6-v2"):
+
+    model = SentenceTransformer(model_name, device=model_kwargs.get("device", None))
+
     res_chunks = []
-    
-    for i in range(1, len(sents)):
-        cos_sim = cosine_similarity(np.matrix(embeddings[i-1]), np.matrix(embeddings[i]))[0][0]
-        
-        if cos_sim > threshold:
-            curr_chunk.append(sents[i])
+
+    for doc in docs:
+        if isinstance(doc, Document):
+            text = doc.page_content or ""
+            metadata = doc.metadata or {}
         else:
-            curr_chunk.append(" ".join(curr_chunk))
-            curr_chunk = [sents[i]]
-    
-    chunks.append(" ".join(curr_chunk))
-    
-    for chunk in chunks:
-        if len(chunk) > 1000:
-            res_chunks.extend(text_splitter.split_text(chunk))
-        else:
-            res_chunks.append(chunk)
-    
+            text = str(doc or "")
+            metadata = {}
+
+        text = text.strip()
+        if not text:
+            continue
+
+        sents = nltk.sent_tokenize(text)
+        if not sents:
+            continue
+
+        embeddings = model.encode(sents, convert_to_numpy=True)
+
+        chunks = []
+        curr_chunk = [sents[0]]
+
+        for i in range(1, len(sents)):
+            a = embeddings[i - 1].reshape(1, -1)
+            b = embeddings[i].reshape(1, -1)
+            cos_sim = float(cosine_similarity(a, b)[0, 0])
+
+            if cos_sim > threshold:
+                curr_chunk.append(sents[i])
+            else:
+                chunks.append(" ".join(curr_chunk))
+                curr_chunk = [sents[i]]
+
+        chunks.append(" ".join(curr_chunk))
+
+        for chunk in chunks:
+            if len(chunk) > 1000:
+                parts = text_splitter.split_text(chunk)
+                for p in parts:
+                    res_chunks.append(Document(page_content=p, metadata=metadata))
+            else:
+                res_chunks.append(Document(page_content=chunk, metadata=metadata))
+
     return res_chunks
 
 def splitting_text(documents):
